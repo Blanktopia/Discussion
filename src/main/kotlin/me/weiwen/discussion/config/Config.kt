@@ -6,22 +6,13 @@ import com.charleskorn.kaml.Yaml
 import kotlinx.serialization.*
 import me.weiwen.discussion.serializers.TextColorSerializer
 import me.weiwen.discussion.serializers.UUIDSerializer
+import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.format.TextColor
 import org.bukkit.plugin.java.JavaPlugin
-import org.spigotmc.SpigotConfig
 import java.io.File
 import java.util.logging.Level
 
 const val CONFIG_VERSION = "1.0.0"
-
-val IS_SERVER_PAPER: Boolean by lazy {
-    try {
-        Class.forName("com.destroystokyo.paper.Title")
-        true
-    } catch (e: ClassNotFoundException) {
-        false
-    }
-}
 
 @Serializable
 data class Config(
@@ -36,6 +27,8 @@ data class Config(
 
     @SerialName("default-channels")
     var defaultChannels: List<String> = listOf("Global", "Local"),
+
+    var colors: List<TextColor> = listOf(),
 
     val messages: Messages = Messages(),
 )
@@ -60,7 +53,7 @@ fun parseConfig(plugin: JavaPlugin): Config {
     if (config.configVersion != CONFIG_VERSION) {
         config.configVersion = CONFIG_VERSION
         plugin.logger.log(Level.INFO, "Updating config")
-        file.writeText(Yaml().encodeToString(SpigotConfig.config))
+        file.writeText(Yaml().encodeToString(plugin.config))
     }
 
     return config

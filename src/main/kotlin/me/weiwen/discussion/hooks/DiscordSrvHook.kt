@@ -14,14 +14,12 @@ object DiscordSrvHook {
                 null
             }
 
-    private val miniMessage: MiniMessage by lazy { MiniMessage.miniMessage() }
-
     fun processChatMessage(player: Player, message: String, channel: String, cancelled: Boolean) {
         discordSrv?.processChatMessage(
             player,
-            miniMessage.deserialize(message),
+            MiniMessage.miniMessage().deserialize(message),
             channel,
-            cancelled
+            cancelled,
         )
     }
 }

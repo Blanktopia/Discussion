@@ -21,12 +21,12 @@ data class ChannelData(
         "Global" to Channel(
             TextColor.color(0xffffff),
             alias = "g",
-            format = "<channel-color><player><channel-color>: <message>",
+            format = "<channel-color><player>: <message></channel-color>",
         ),
         "Local" to Channel(
             TextColor.color(0x98a7f2),
             alias = "l",
-            format = "<channel-color>[Local] <player><channel-color>: <reset><message>",
+            format = "<channel-color>[Local] <player>: <message></channel-color>",
             distance = 100.0,
         ),
     ),

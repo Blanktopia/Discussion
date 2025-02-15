@@ -4,21 +4,17 @@ import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
-    id("com.mineinabyss.conventions.kotlin")
-    kotlin("plugin.serialization")
-    id("net.minecrell.plugin-yml.bukkit") version "0.5.2"
-    id("com.github.johnrengelman.shadow") version "7.1.0"
+    kotlin("jvm") version "2.1.10"
+    kotlin("plugin.serialization") version "2.1.10"
+    id("net.minecrell.plugin-yml.bukkit") version "0.6.0"
+    id("io.github.goooler.shadow") version "8.1.7"
 }
 
 repositories {
     mavenCentral()
 
-    maven { url = uri("https://hub.spigotmc.org/nexus/content/repositories/snapshots/") }
-    maven { url = uri("https://papermc.io/repo/repository/maven-public") }
+    maven("https://repo.purpurmc.org/snapshots")
     maven { url = uri("https://oss.sonatype.org/content/repositories/snapshots/") }
-
-    // Cloud
-    maven { url = uri("https://oss.sonatype.org/content/repositories/snapshots") }
 
     // DiscordSRV
     maven { url = uri("https://m2.dv8tion.net/releases") }
@@ -36,25 +32,16 @@ repositories {
 }
 
 dependencies {
-    implementation(libs.idofront.platform.loader)
-    compileOnly(libs.kotlin.stdlib)
-    compileOnly(libs.kotlinx.serialization.json)
-    compileOnly(libs.kotlinx.serialization.kaml)
-    compileOnly(libs.kotlinx.serialization.cbor)
-    implementation(libs.idofront.core)
+    compileOnly(kotlin("stdlib"))
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.0")
+    implementation("com.charleskorn.kaml:kaml:0.72.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-cbor:1.8.0")
 
     // Paper
-    compileOnly("io.papermc.paper", "paper-api", "1.18.2-R0.1-SNAPSHOT")
-
-    // Spigot
-    compileOnly("org.spigotmc", "spigot", "1.18.2-R0.1-SNAPSHOT")
-
-    // Cloud
-    implementation("cloud.commandframework", "cloud-paper", "1.7.0")
-    implementation("cloud.commandframework", "cloud-minecraft-extras", "1.7.0")
+    compileOnly("org.purpurmc.purpur", "purpur-api", "1.21-R0.1-SNAPSHOT")
 
     // DiscordSRV
-    compileOnly("com.discordsrv", "discordsrv", "1.26.0-SNAPSHOT")
+    compileOnly("com.discordsrv", "discordsrv", "1.28.0")
 
     // PlaceholderAPI
     compileOnly("me.clip", "placeholderapi", "2.11.2")
@@ -84,8 +71,6 @@ tasks.withType<KotlinCompile> {
 }
 
 tasks.withType<ShadowJar> {
-    classifier = null
-
     fun reloc(pkg: String) = relocate(pkg, "$group.dependency.$pkg")
 
     reloc("org.bstats")

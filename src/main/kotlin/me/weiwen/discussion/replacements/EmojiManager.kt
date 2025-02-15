@@ -17,6 +17,8 @@ object EmojiManager {
     private lateinit var names: List<String>
     private lateinit var replacementConfig: TextReplacementConfig
 
+    private val json = Json { ignoreUnknownKeys = true }
+
     fun onEnable() {
         loadEmojis()
     }
@@ -26,7 +28,7 @@ object EmojiManager {
         val file = File(plugin.dataFolder, "emoji.json")
 
         rawEmojis = try {
-            Json { ignoreUnknownKeys = true }.decodeFromString(file.readText())
+            json.decodeFromString(file.readText())
         } catch (e: Exception) {
             plugin.logger.log(Level.SEVERE, e.message)
             listOf()

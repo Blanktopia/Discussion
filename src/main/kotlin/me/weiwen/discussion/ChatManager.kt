@@ -1,11 +1,10 @@
 package me.weiwen.discussion
 
-import cloud.commandframework.arguments.standard.StringArgument
-import cloud.commandframework.bukkit.CloudBukkitCapabilities
-import cloud.commandframework.bukkit.parsers.PlayerArgument
-import cloud.commandframework.execution.CommandExecutionCoordinator
-import cloud.commandframework.minecraft.extras.TextColorArgument
-import cloud.commandframework.paper.PaperCommandManager
+import com.mojang.brigadier.Command
+import com.mojang.brigadier.arguments.StringArgumentType
+import com.mojang.brigadier.context.CommandContext
+import io.papermc.paper.command.brigadier.CommandSourceStack
+import io.papermc.paper.command.brigadier.Commands
 import me.clip.placeholderapi.PlaceholderAPI
 import me.weiwen.discussion.Discussion.Companion.plugin
 import me.weiwen.discussion.database.*
@@ -15,8 +14,6 @@ import me.weiwen.discussion.replacements.EmojiManager.emojify
 import me.weiwen.discussion.replacements.itemify
 import me.weiwen.discussion.replacements.linkify
 import net.kyori.adventure.text.Component
-import net.kyori.adventure.text.ComponentIteratorType
-import net.kyori.adventure.text.TextComponent
 import net.kyori.adventure.text.minimessage.MiniMessage
 import net.kyori.adventure.text.minimessage.tag.Tag
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder
@@ -24,9 +21,11 @@ import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
 import org.bukkit.Bukkit
 import org.bukkit.entity.Player
-import java.awt.SystemColor.text
 import java.util.*
-import java.util.function.Function
+import io.papermc.paper.command.brigadier.argument.resolvers.selector.PlayerSelectorArgumentResolver
+import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents
+import net.kyori.adventure.text.format.NamedTextColor
+
 
 object ChatManager {
     lateinit var channelData: ChannelData
@@ -47,8 +46,12 @@ object ChatManager {
 
     fun broadcastMessage(player: Player, message: String, channel: Channel) {
         val formattedMessage = formatMessage(player, Component.text(message), channel)
-        channel.audience(player.location).forEach {
+        val audience = channel.audience(player.location)
+        audience.forEach {
             it.sendMessage(formattedMessage)
+        }
+        if (channel.distance != null && audience.all { it == player }) {
+            player.sendMessage(miniMessage.deserialize(plugin.config.messages.noOneNearby))
         }
         DiscordSrvHook.processChatMessage(player, message, channel.name, false)
         plugin.logger.info(LegacyComponentSerializer.legacySection().serialize(formattedMessage))
@@ -136,360 +139,436 @@ object ChatManager {
     }
 
     private fun registerCommands() {
-        val manager = PaperCommandManager(
-            plugin,
-            CommandExecutionCoordinator.simpleCoordinator(),
-            Function.identity(),
-            Function.identity(),
-        )
-
-        try {
-            manager.registerBrigadier()
-            if (manager.hasCapability(CloudBukkitCapabilities.ASYNCHRONOUS_COMPLETION)) {
-                manager.registerAsynchronousCompletions()
+        val emojisNode = Commands.literal("emojis")
+            .requires { it.sender.hasPermission("discussion.command.emojis") }
+            .executes { ctx ->
+                ctx.source.sender.sendMessage(EmojiManager.listAsComponent())
+                Command.SINGLE_SUCCESS
             }
-            plugin.logger.info("Registered commands.")
-        } catch (e: Exception) {
-            plugin.logger.warning("Failed to initialize Brigadier support: " + e.message)
+            .build()
+
+        val chatNode = Commands.literal("chat")
+            .requires { it.sender.hasPermission("discussion.command.chat") && it.executor is Player }
+            .then(
+                Commands.literal("make")
+                    .then(
+                        Commands.argument("channel", StringArgumentType.string())
+                            .then(
+                                Commands.argument("color", StringArgumentType.string())
+                                    .suggests { ctx, builder ->
+                                        plugin.config.colors.forEach { builder.suggest(it.toString()) }
+                                        builder.buildFuture()
+                                    }
+                                    .then(
+                                        Commands.argument("password", StringArgumentType.string())
+                                            .executes(::handleMakeChannel)
+                                    )
+                                    .executes(::handleMakeChannel)
+                            )
+                    )
+            )
+            .then(
+                Commands.literal("leave")
+                    .then(
+                        Commands.argument("channel", StringArgumentType.string())
+                            .suggests { ctx, builder ->
+                                channels.keys.forEach { builder.suggest(it) }
+                                builder.buildFuture()
+                            }
+                            .executes(::handleLeaveChannel)
+                    )
+            )
+            .then(
+                Commands.literal("invite")
+                    .then(
+                        Commands.argument("player", StringArgumentType.string())
+                            .suggests { ctx, builder ->
+                                plugin.server.onlinePlayers.forEach { builder.suggest(it.name) }
+                                builder.buildFuture()
+                            }
+                            .then(
+                                Commands.argument("channel", StringArgumentType.string())
+                                    .suggests { ctx, builder ->
+                                        channels.keys.forEach { builder.suggest(it) }
+                                        builder.buildFuture()
+                                    }
+                                    .executes(::handleInviteChannel)
+                            )
+                    )
+            )
+            .then(
+                Commands.literal("join")
+                    .then(
+                        Commands.argument("channel", StringArgumentType.string())
+                            .suggests { ctx, builder ->
+                                channels.values.map { it.name }.toSet().forEach { builder.suggest(it) }
+                                builder.buildFuture()
+                            }
+                            .then(
+                                Commands.argument("password", StringArgumentType.string())
+                                    .executes(::handleJoinChannel)
+                            )
+                            .executes(::handleJoinChannel)
+                    )
+            )
+            .then(
+                Commands.literal("info")
+                    .then(
+                        Commands.argument("channel", StringArgumentType.string())
+                            .suggests { ctx, builder ->
+                                channels.keys.forEach { builder.suggest(it) }
+                                builder.buildFuture()
+                            }
+                            .executes(::handleChannelInfo)
+                    )
+                    .executes(::handleChannelInfo)
+            )
+            .then(
+                Commands.literal("list")
+                    .executes(::handleListChannels)
+            )
+            .build()
+
+        val chNode = Commands.literal("ch")
+            .requires { it.sender.hasPermission("discussion.command.chat") && it.executor is Player }
+            .then(
+                Commands.argument("channel", StringArgumentType.string())
+                    .suggests { ctx, builder ->
+                        channels.keys.forEach { builder.suggest(it) }
+                        builder.buildFuture()
+                    }
+                    .executes(::handleSwitchChannel)
+            )
+            .build()
+
+        plugin.lifecycleManager.registerEventHandler(LifecycleEvents.COMMANDS, {
+            it.registrar().register(emojisNode)
+            it.registrar().register(chatNode)
+            it.registrar().register(chNode)
+        })
+    }
+
+    private fun handleMakeChannel(ctx: CommandContext<CommandSourceStack>): Int {
+        val player = ctx.source.executor as Player
+        val alias = StringArgumentType.getString(ctx, "channel")
+        val password = StringArgumentType.getString(ctx, "password")
+
+        if (channels[alias.lowercase()] != null) {
+            player.sendMessage(
+                miniMessage.deserialize(
+                    plugin.config.messages.errorChannelAlreadyExists,
+                    Placeholder.unparsed("channel", alias)
+                )
+            )
+            return Command.SINGLE_SUCCESS
         }
 
-        manager.command(manager.commandBuilder("emojis")
-            .permission("discussion.command.emojis")
-            .handler { ctx ->
-                ctx.sender.sendMessage(EmojiManager.listAsComponent())
-            })
+        val channel = Channel(
+            ctx.getArgument("color", NamedTextColor::class.java),
+            password.ifEmpty { null },
+            name = alias,
+            players = mutableSetOf(player.uniqueId),
+            owner = player.uniqueId
+        )
+        channels[alias.lowercase()] = channel
+        saveChannels()
 
-        manager.commandBuilder("chat", "ch")
-            .permission("discussion.command.chat")
-            .senderType(Player::class.java).let { builder ->
-                manager.command(builder.literal("make")
-                    .argument(StringArgument.of("channel"))
-                    .argument(TextColorArgument.of("color"))
-                    .argument(StringArgument.optional("password"))
-                    .handler { ctx ->
-                        val player = ctx.sender as Player
-                        val alias = ctx.get<String>("channel")
-                        val password = ctx.getOptional<String>("password")
+        val data = playerData[player.uniqueId] ?: return Command.SINGLE_SUCCESS
+        data.channels.add(channel.name)
+        setChannel(player, channel)
 
-                        if (channels[alias.lowercase()] != null) {
-                            player.sendMessage(
-                                miniMessage.deserialize(
-                                    plugin.config.messages.errorChannelAlreadyExists,
-                                    Placeholder.unparsed("channel", alias)
-                                )
-                            )
-                            return@handler
-                        }
-
-                        val channel = Channel(
-                            ctx.get("color"),
-                            if (password.isPresent) password.get() else null,
-                            name = alias,
-                            players = mutableSetOf(player.uniqueId),
-                            owner = player.uniqueId
-                        )
-                        channels[alias.lowercase()] = channel
-                        saveChannels()
-
-                        val data = playerData[player.uniqueId] ?: return@handler
-                        data.channels.add(channel.name)
-                        setChannel(player, channel)
-
-                        player.sendMessage(
-                            miniMessage.deserialize(
-                                plugin.config.messages.channelJoined,
-                                Placeholder.component(
-                                    "channel",
-                                    Component.text(channel.name).color(channel.color)
-                                )
-                            )
-                        )
-                    })
-
-                manager.command(builder.literal("leave")
-                    .argument(StringArgument.of("channel"))
-                    .handler { ctx ->
-                        val player = ctx.sender as Player
-                        val alias = ctx.get<String>("channel")
-
-                        val channel = channels[alias.lowercase()]
-
-                        if (channel == null) {
-                            player.sendMessage(
-                                miniMessage.deserialize(
-                                    plugin.config.messages.errorChannelNotFound,
-                                    Placeholder.unparsed("channel", alias)
-                                )
-                            )
-                            return@handler
-                        }
-
-                        if (channel.name in plugin.config.defaultChannels) {
-                            player.sendMessage(
-                                miniMessage.deserialize(
-                                    plugin.config.messages.errorCannotLeaveChannel,
-                                    Placeholder.component(
-                                        "channel",
-                                        Component.text(channel.name).color(channel.color)
-                                    )
-                                )
-                            )
-                            return@handler
-                        }
-
-                        channel.players.remove(player.uniqueId)
-                        if (channel.players.isEmpty()) {
-                            channels.remove(channel.name.lowercase())
-                            channel.alias?.let { channels.remove(it.lowercase()) }
-                            saveChannels()
-                        }
-
-                        val data = playerData[player.uniqueId] ?: return@handler
-                        data.channels.remove(channel.name)
-                        if (data.channel == channel.name) {
-                            data.channel = data.channels.first()
-                        }
-
-                        player.sendMessage(
-                            miniMessage.deserialize(
-                                plugin.config.messages.channelLeft,
-                                Placeholder.component(
-                                    "channel",
-                                    Component.text(channel.name).color(channel.color)
-                                )
-                            )
-                        )
-                    })
-
-                manager.command(builder.literal("invite")
-                    .argument(PlayerArgument.of("player"))
-                    .argument(StringArgument.of("channel"))
-                    .handler { ctx ->
-                        val player = ctx.sender as Player
-                        val thisData = playerData[player.uniqueId] ?: return@handler
-
-                        val other = ctx.get<Player>("player")
-                        val otherData = playerData[other.uniqueId] ?: return@handler
-
-                        val alias = ctx.get<String>("channel")
-
-                        val channel = channels[alias.lowercase()]
-
-                        if (channel == null || !thisData.channels.contains(channel.name)) {
-                            player.sendMessage(
-                                miniMessage.deserialize(
-                                    plugin.config.messages.errorChannelNotFound,
-                                    Placeholder.unparsed("channel", alias)
-                                )
-                            )
-                            return@handler
-                        }
-
-                        if (otherData.channels.contains(channel.name)) {
-                            player.sendMessage(
-                                miniMessage.deserialize(
-                                    plugin.config.messages.errorAlreadyJoined,
-                                    Placeholder.unparsed("channel", alias)
-                                )
-                            )
-                            return@handler
-                        }
-
-                        channel.players.add(player.uniqueId)
-
-                        thisData.channels.add(channel.name)
-                        setChannel(player, channel)
-
-                        other.sendMessage(
-                            miniMessage.deserialize(
-                                plugin.config.messages.inviteReceived,
-                                Placeholder.component("player", player.displayName()),
-                                Placeholder.component(
-                                    "channel",
-                                    Component.text(channel.name).color(channel.color)
-                                ),
-                                Placeholder.unparsed("password", channel.password ?: ""),
-                            )
-                        )
-
-                        player.sendMessage(
-                            miniMessage.deserialize(
-                                plugin.config.messages.inviteSent,
-                                Placeholder.component("player", other.displayName()),
-                                Placeholder.component(
-                                    "channel",
-                                    Component.text(channel.name).color(channel.color)
-                                )
-                            )
-                        )
-                    })
-
-                manager.command(builder.literal("join")
-                    .argument(StringArgument.of("channel"))
-                    .argument(StringArgument.optional("password"))
-                    .handler { ctx ->
-                        val player = ctx.sender as Player
-                        val alias = ctx.get<String>("channel")
-
-                        val channel = channels[alias.lowercase()]
-
-                        if (channel == null) {
-                            player.sendMessage(
-                                miniMessage.deserialize(
-                                    plugin.config.messages.errorChannelNotFound,
-                                    Placeholder.unparsed("channel", alias)
-                                )
-                            )
-                            return@handler
-                        }
-
-                        val data = playerData[player.uniqueId] ?: return@handler
-                        if (data.channels.contains(channel.name)) {
-                            player.sendMessage(
-                                miniMessage.deserialize(
-                                    plugin.config.messages.errorAlreadyJoined,
-                                    Placeholder.unparsed("channel", alias)
-                                )
-                            )
-                            return@handler
-                        }
-
-                        if (channel.password != null) {
-                            val password = ctx.getOptional<String>("password")
-                            if (password.isEmpty) {
-                                player.sendMessage(
-                                    miniMessage.deserialize(
-                                        plugin.config.messages.errorChannelNeedsPassword,
-                                        Placeholder.component(
-                                            "channel",
-                                            Component.text(channel.name).color(channel.color)
-                                        )
-                                    )
-                                )
-                                return@handler
-                            } else if (channel.password != password.get()) {
-                                player.sendMessage(
-                                    miniMessage.deserialize(
-                                        plugin.config.messages.errorWrongPassword,
-                                        Placeholder.component(
-                                            "channel",
-                                            Component.text(channel.name).color(channel.color)
-                                        )
-                                    )
-                                )
-                                return@handler
-                            }
-                        }
-
-                        channel.players.add(player.uniqueId)
-
-                        data.channels.add(channel.name)
-                        setChannel(player, channel)
-
-                        val message = miniMessage.deserialize(
-                            plugin.config.messages.playerJoinedChannel,
-                            Placeholder.component("player", player.displayName()),
-                            Placeholder.component("channel", Component.text(channel.name).color(channel.color))
-                        )
-                        channel.players.forEach {
-                            plugin.server.getPlayer(it)?.sendMessage(message)
-                        }
-
-                        player.sendMessage(
-                            miniMessage.deserialize(
-                                plugin.config.messages.channelJoined,
-                                Placeholder.component(
-                                    "channel",
-                                    Component.text(channel.name).color(channel.color)
-                                )
-                            )
-                        )
-                    })
-
-                manager.command(builder.literal("info")
-                    .argument(StringArgument.optional("channel"))
-                    .handler { ctx ->
-                        val player = ctx.sender as Player
-                        val data = playerData[player.uniqueId] ?: return@handler
-                        val channel =
-                            channels[ctx.getOptional<String>("channel").orElse(data.channel)] ?: return@handler
-
-                        player.sendMessage(
-                            miniMessage.deserialize(
-                                plugin.config.messages.channelInfo,
-                                Placeholder.component(
-                                    "channel",
-                                    Component.text(channel.name).color(channel.color)
-                                ),
-                                Placeholder.parsed("players", channel.players.joinToString(", ") {
-                                    plugin.server.getPlayer(it)?.let {
-                                        miniMessage.serialize(it.displayName())
-                                    } ?: "Unknown"
-                                })
-                            )
-                        )
-                    })
-
-                manager.command(builder.literal("list")
-                    .handler { ctx ->
-                        val player = ctx.sender as Player
-                        val data = playerData[player.uniqueId] ?: return@handler
-                        val channels =
-                            data.channels.joinToString(", ") {
-                                val channel = channels[it.lowercase()] ?: return@joinToString "Unknown"
-                                when (it) {
-                                    data.channel ->
-                                        "<underlined>" +
-                                                "<hover:show_text:'<gold>Alias: <white>${channel.alias}'>" +
-                                                "<click:run_command:/${channel.alias ?: channel.name}>" +
-                                                "<color:${channel.color.asHexString()}>" +
-                                                channel.name +
-                                                "</color:${channel.color.asHexString()}>" +
-                                                "</click></hover></underlined>"
-                                    data.alternate ->
-                                        "<hover:show_text:'<gold>Alias: <white>${channel.alias}'>" +
-                                                "<click:run_command:/${channel.alias ?: channel.name}>" +
-                                                "<color:${channel.color.asHexString()}>" +
-                                                channel.name +
-                                                "</color:${channel.color.asHexString()}>" +
-                                                "</click></hover>"
-                                    else ->
-                                        "<hover:show_text:'<gold>Alias: <white>${channel.alias}'>" +
-                                                "<click:run_command:/${channel.alias ?: channel.name}>" +
-                                                "<color:${channel.color.asHexString()}>" +
-                                                channel.name +
-                                                "</color:${channel.color.asHexString()}>" +
-                                                "</click></hover>"
-                                }
-                            }
-
-                        player.sendMessage(
-                            miniMessage.deserialize(
-                                plugin.config.messages.listChannels,
-                                Placeholder.parsed("channels", channels),
-                            )
-                        )
-                    })
-
-                manager.command(builder.argument(StringArgument.of("channel"))
-                    .handler { ctx ->
-                        val player = ctx.sender as Player
-
-                        val alias = ctx.get<String>("channel")
-                        val channel = channels[alias.lowercase()]
-
-                        if (channel == null) {
-                            player.sendMessage(
-                                miniMessage.deserialize(
-                                    plugin.config.messages.errorChannelNotFound,
-                                    Placeholder.unparsed("channel", alias)
-                                )
-                            )
-                            return@handler
-                        }
-
-                        setChannel(player, channel)
-                    })
-            }
+        player.sendMessage(
+            miniMessage.deserialize(
+                plugin.config.messages.channelJoined,
+                Placeholder.component(
+                    "channel",
+                    Component.text(channel.name).color(channel.color)
+                )
+            )
+        )
+        return Command.SINGLE_SUCCESS
     }
+
+    private fun handleLeaveChannel(ctx: CommandContext<CommandSourceStack>): Int {
+        val player = ctx.source.executor as Player
+        val alias = StringArgumentType.getString(ctx, "channel")
+
+        val channel = channels[alias.lowercase()]
+
+        if (channel == null) {
+            player.sendMessage(
+                miniMessage.deserialize(
+                    plugin.config.messages.errorChannelNotFound,
+                    Placeholder.unparsed("channel", alias)
+                )
+            )
+            return Command.SINGLE_SUCCESS
+        }
+
+        if (channel.name in plugin.config.defaultChannels) {
+            player.sendMessage(
+                miniMessage.deserialize(
+                    plugin.config.messages.errorCannotLeaveChannel,
+                    Placeholder.component(
+                        "channel",
+                        Component.text(channel.name).color(channel.color)
+                    )
+                )
+            )
+            return Command.SINGLE_SUCCESS
+        }
+
+        channel.players.remove(player.uniqueId)
+        if (channel.players.isEmpty()) {
+            channels.remove(channel.name.lowercase())
+            channel.alias?.let { channels.remove(it.lowercase()) }
+            saveChannels()
+        }
+
+        val data = playerData[player.uniqueId] ?: return Command.SINGLE_SUCCESS
+        data.channels.remove(channel.name)
+        if (data.channel == channel.name) {
+            data.channel = data.channels.first()
+        }
+
+        player.sendMessage(
+            miniMessage.deserialize(
+                plugin.config.messages.channelLeft,
+                Placeholder.component(
+                    "channel",
+                    Component.text(channel.name).color(channel.color)
+                )
+            )
+        )
+        return Command.SINGLE_SUCCESS
+    }
+
+    private fun handleInviteChannel(ctx: CommandContext<CommandSourceStack>): Int {
+        val player = ctx.source.executor as Player
+        val thisData = playerData[player.uniqueId] ?: return Command.SINGLE_SUCCESS
+
+        val otherResolver = ctx.getArgument("target", PlayerSelectorArgumentResolver::class.java)
+        val other: Player = otherResolver.resolve(ctx.source)[0]
+        val otherData = playerData[other.uniqueId] ?: return Command.SINGLE_SUCCESS
+
+        val alias = StringArgumentType.getString(ctx, "channel")
+
+        val channel = channels[alias.lowercase()]
+
+        if (channel == null || !thisData.channels.contains(channel.name)) {
+            player.sendMessage(
+                miniMessage.deserialize(
+                    plugin.config.messages.errorChannelNotFound,
+                    Placeholder.unparsed("channel", alias)
+                )
+            )
+            return Command.SINGLE_SUCCESS
+        }
+
+        if (otherData.channels.contains(channel.name)) {
+            player.sendMessage(
+                miniMessage.deserialize(
+                    plugin.config.messages.errorAlreadyJoined,
+                    Placeholder.unparsed("channel", alias)
+                )
+            )
+            return Command.SINGLE_SUCCESS
+        }
+
+        channel.players.add(player.uniqueId)
+
+        thisData.channels.add(channel.name)
+        setChannel(player, channel)
+
+        other.sendMessage(
+            miniMessage.deserialize(
+                plugin.config.messages.inviteReceived,
+                Placeholder.component("player", player.displayName()),
+                Placeholder.component(
+                    "channel",
+                    Component.text(channel.name).color(channel.color)
+                ),
+                Placeholder.unparsed("password", channel.password ?: ""),
+            )
+        )
+
+        player.sendMessage(
+            miniMessage.deserialize(
+                plugin.config.messages.inviteSent,
+                Placeholder.component("player", other.displayName()),
+                Placeholder.component(
+                    "channel",
+                    Component.text(channel.name).color(channel.color)
+                )
+            )
+        )
+        return Command.SINGLE_SUCCESS
+    }
+
+    private fun handleJoinChannel(ctx: CommandContext<CommandSourceStack>): Int {
+        val player = ctx.source.executor as Player
+        val alias = StringArgumentType.getString(ctx, "channel")
+
+        val channel = channels[alias.lowercase()]
+
+        if (channel == null) {
+            player.sendMessage(
+                miniMessage.deserialize(
+                    plugin.config.messages.errorChannelNotFound,
+                    Placeholder.unparsed("channel", alias)
+                )
+            )
+            return Command.SINGLE_SUCCESS
+        }
+
+        val data = playerData[player.uniqueId] ?: return Command.SINGLE_SUCCESS
+        if (data.channels.contains(channel.name)) {
+            player.sendMessage(
+                miniMessage.deserialize(
+                    plugin.config.messages.errorAlreadyJoined,
+                    Placeholder.unparsed("channel", alias)
+                )
+            )
+            return Command.SINGLE_SUCCESS
+        }
+
+        if (channel.password != null) {
+            val password = StringArgumentType.getString(ctx, "password")
+            if (password.isEmpty()) {
+                player.sendMessage(
+                    miniMessage.deserialize(
+                        plugin.config.messages.errorChannelNeedsPassword,
+                        Placeholder.component(
+                            "channel",
+                            Component.text(channel.name).color(channel.color)
+                        )
+                    )
+                )
+                return Command.SINGLE_SUCCESS
+            } else if (channel.password != password) {
+                player.sendMessage(
+                    miniMessage.deserialize(
+                        plugin.config.messages.errorWrongPassword,
+                        Placeholder.component(
+                            "channel",
+                            Component.text(channel.name).color(channel.color)
+                        )
+                    )
+                )
+                return Command.SINGLE_SUCCESS
+            }
+        }
+
+        channel.players.add(player.uniqueId)
+
+        data.channels.add(channel.name)
+        setChannel(player, channel)
+
+        val message = miniMessage.deserialize(
+            plugin.config.messages.playerJoinedChannel,
+            Placeholder.component("player", player.displayName()),
+            Placeholder.component("channel", Component.text(channel.name).color(channel.color))
+        )
+        channel.players.forEach {
+            plugin.server.getPlayer(it)?.sendMessage(message)
+        }
+
+        player.sendMessage(
+            miniMessage.deserialize(
+                plugin.config.messages.channelJoined,
+                Placeholder.component(
+                    "channel",
+                    Component.text(channel.name).color(channel.color)
+                )
+            )
+        )
+        return Command.SINGLE_SUCCESS
+    }
+
+    private fun handleChannelInfo(ctx: CommandContext<CommandSourceStack>): Int {
+        val player = ctx.source.executor as Player
+        val data = playerData[player.uniqueId] ?: return Command.SINGLE_SUCCESS
+        val channel =
+            channels[StringArgumentType.getString(ctx, "channel")] ?: return Command.SINGLE_SUCCESS
+
+        player.sendMessage(
+            miniMessage.deserialize(
+                plugin.config.messages.channelInfo,
+                Placeholder.component(
+                    "channel",
+                    Component.text(channel.name).color(channel.color)
+                ),
+                Placeholder.parsed("players", channel.players.joinToString(", ") {
+                    plugin.server.getPlayer(it)?.let {
+                        miniMessage.serialize(it.displayName())
+                    } ?: "Unknown"
+                })
+            )
+        )
+        return Command.SINGLE_SUCCESS
+    }
+
+    private fun handleListChannels(ctx: CommandContext<CommandSourceStack>): Int {
+        val player = ctx.source.executor as Player
+        val data = playerData[player.uniqueId] ?: return Command.SINGLE_SUCCESS
+        val channels =
+            data.channels.joinToString(", ") {
+                val channel = channels[it.lowercase()] ?: return@joinToString "Unknown"
+                when (it) {
+                    data.channel ->
+                        "<underlined>" +
+                                "<hover:show_text:'<gold>Alias: <white>${channel.alias}'>" +
+                                "<click:run_command:/${channel.alias ?: channel.name}>" +
+                                "<color:${channel.color.asHexString()}>" +
+                                channel.name +
+                                "</color:${channel.color.asHexString()}>" +
+                                "</click></hover></underlined>"
+
+                    data.alternate ->
+                        "<hover:show_text:'<gold>Alias: <white>${channel.alias}'>" +
+                                "<click:run_command:/${channel.alias ?: channel.name}>" +
+                                "<color:${channel.color.asHexString()}>" +
+                                channel.name +
+                                "</color:${channel.color.asHexString()}>" +
+                                "</click></hover>"
+
+                    else ->
+                        "<hover:show_text:'<gold>Alias: <white>${channel.alias}'>" +
+                                "<click:run_command:/${channel.alias ?: channel.name}>" +
+                                "<color:${channel.color.asHexString()}>" +
+                                channel.name +
+                                "</color:${channel.color.asHexString()}>" +
+                                "</click></hover>"
+                }
+            }
+
+        player.sendMessage(
+            miniMessage.deserialize(
+                plugin.config.messages.listChannels,
+                Placeholder.parsed("channels", channels),
+            )
+        )
+        return Command.SINGLE_SUCCESS
+    }
+
+    private fun handleSwitchChannel(ctx: CommandContext<CommandSourceStack>): Int {
+        val player = ctx.source.executor as Player
+
+        val alias = StringArgumentType.getString(ctx, "channel")
+        val channel = channels[alias.lowercase()]
+
+        if (channel == null) {
+            player.sendMessage(
+                miniMessage.deserialize(
+                    plugin.config.messages.errorChannelNotFound,
+                    Placeholder.unparsed("channel", alias)
+                )
+            )
+            return Command.SINGLE_SUCCESS
+        }
+
+        setChannel(player, channel)
+        return Command.SINGLE_SUCCESS
+    }
+
 }

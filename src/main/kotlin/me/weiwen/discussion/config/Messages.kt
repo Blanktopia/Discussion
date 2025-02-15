@@ -52,4 +52,7 @@ data class Messages(
 
     @SerialName("error-player-already-joined")
     val errorPlayerAlreadyJoined: String = "<red>Player already in channel: <channel>.</red>",
+
+    @SerialName("no-one-nearby")
+    val noOneNearby: String = "<gray>No one is nearby to hear you.</gray>",
 )
