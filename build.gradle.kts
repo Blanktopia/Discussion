@@ -1,7 +1,6 @@
 @file:Suppress("SpellCheckingInspection")
 
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
-import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 plugins {
     kotlin("jvm") version "2.1.10"
@@ -38,7 +37,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-cbor:1.8.0")
 
     // Paper
-    compileOnly("org.purpurmc.purpur", "purpur-api", "1.21-R0.1-SNAPSHOT")
+    compileOnly("org.purpurmc.purpur", "purpur-api", "1.21.4-R0.1-SNAPSHOT")
 
     // DiscordSRV
     compileOnly("com.discordsrv", "discordsrv", "1.28.0")
@@ -60,14 +59,6 @@ bukkit {
     website = "weiwen.me"
 
     softDepend = listOf("DiscordSRV", "PlaceholderAPI")
-}
-
-tasks.withType<KotlinCompile> {
-    kotlinOptions.freeCompilerArgs = listOf("-opt-in=kotlinx.serialization.ExperimentalSerializationApi")
-
-    sourceSets.main {
-        java.srcDirs("src/main/kotlin")
-    }
 }
 
 tasks.withType<ShadowJar> {
