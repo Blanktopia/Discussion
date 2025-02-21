@@ -24,7 +24,9 @@ import org.bukkit.entity.Player
 import java.util.*
 import io.papermc.paper.command.brigadier.argument.resolvers.selector.PlayerSelectorArgumentResolver
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents
+import me.weiwen.discussion.bubbles.BubblesManager
 import net.kyori.adventure.text.format.NamedTextColor
+import net.kyori.adventure.text.format.TextColor
 import org.bukkit.event.Event
 
 
@@ -46,7 +48,7 @@ object ChatManager {
     }
 
     fun broadcastMessage(player: Player, message: String, channel: Channel, event: Event) {
-        val formattedMessage = formatMessage(player, Component.text(message), channel)
+        val formattedMessage = formatMessage(channel.format, player, Component.text(message), channel)
         val audience = channel.audience(player.location)
         audience.forEach {
             it.sendMessage(formattedMessage)
@@ -54,7 +56,12 @@ object ChatManager {
         if (channel.distance != null && audience.all { it == player }) {
             player.sendMessage(miniMessage.deserialize(plugin.config.messages.noOneNearby))
         }
-        DiscordSrvHook.processChatMessage(player, message, channel.name, false, event)
+        if (plugin.config.bubbles.enabled) {
+            plugin.server.scheduler.runTask(plugin) { ->
+                BubblesManager.processChatMessage(player, Component.text(message), channel, audience)
+            }
+        }
+        DiscordSrvHook.processChatMessage(player, formattedMessage, channel.name, false, event)
         plugin.logger.info(LegacyComponentSerializer.legacySection().serialize(formattedMessage))
     }
 
@@ -82,10 +89,10 @@ object ChatManager {
     }
 
 
-    private fun formatMessage(player: Player, msg: Component, channel: Channel): Component {
+    fun formatMessage(format: String, player: Player, msg: Component, channel: Channel): Component {
         val message = emojify(itemify(linkify(msg), player))
 
-        var format = channel.format
+        var format = format
         if (Bukkit.getPluginManager().getPlugin("PlaceholderAPI") != null) {
             format = PlaceholderAPI.setPlaceholders(player, format)
         }
@@ -160,11 +167,33 @@ object ChatManager {
                                         plugin.config.colors.forEach { builder.suggest(it.toString()) }
                                         builder.buildFuture()
                                     }
+                                    .executes { ctx ->
+                                        val player = ctx.source.executor as Player
+                                        val channel = StringArgumentType.getString(ctx, "channel")
+                                        val color = TextColor.fromCSSHexString(StringArgumentType.getString(ctx, "color")) ?: NamedTextColor.WHITE
+                                        handleMakeChannel(player, channel, color)
+                                    }
                                     .then(
                                         Commands.argument("password", StringArgumentType.string())
-                                            .executes(::handleMakeChannel)
+                                            .executes { ctx ->
+                                                val player = ctx.source.executor as Player
+                                                val channel = StringArgumentType.getString(ctx, "channel")
+                                                val color = TextColor.fromCSSHexString(StringArgumentType.getString(ctx, "color")) ?: NamedTextColor.WHITE
+                                                val password = StringArgumentType.getString(ctx, "password")
+                                                handleMakeChannel(player, channel, color, password)
+                                            }
+                                            .then(
+                                                Commands.argument("alias", StringArgumentType.string())
+                                                    .executes { ctx ->
+                                                        val player = ctx.source.executor as Player
+                                                        val channel = StringArgumentType.getString(ctx, "channel")
+                                                        val color = TextColor.fromCSSHexString(StringArgumentType.getString(ctx, "color")) ?: NamedTextColor.WHITE
+                                                        val password = StringArgumentType.getString(ctx, "password")
+                                                        val alias = StringArgumentType.getString(ctx, "alias")
+                                                        handleMakeChannel(player, channel, color, password, alias)
+                                                    }
+                                            )
                                     )
-                                    .executes(::handleMakeChannel)
                             )
                     )
             )
@@ -249,12 +278,18 @@ object ChatManager {
         })
     }
 
-    private fun handleMakeChannel(ctx: CommandContext<CommandSourceStack>): Int {
-        val player = ctx.source.executor as Player
-        val alias = StringArgumentType.getString(ctx, "channel")
-        val password = StringArgumentType.getString(ctx, "password")
+    private fun handleMakeChannel(player: Player, name: String, color: TextColor, password: String? = null, alias: String? = null): Int {
+        if (channels[name.lowercase()] != null) {
+            player.sendMessage(
+                miniMessage.deserialize(
+                    plugin.config.messages.errorChannelAlreadyExists,
+                    Placeholder.unparsed("channel", name)
+                )
+            )
+            return Command.SINGLE_SUCCESS
+        }
 
-        if (channels[alias.lowercase()] != null) {
+        if (alias != null && channels[alias.lowercase()] != null) {
             player.sendMessage(
                 miniMessage.deserialize(
                     plugin.config.messages.errorChannelAlreadyExists,
@@ -265,17 +300,20 @@ object ChatManager {
         }
 
         val channel = Channel(
-            ctx.getArgument("color", NamedTextColor::class.java),
-            password.ifEmpty { null },
-            name = alias,
+            color,
+            password?.ifEmpty { null },
+            name = name,
             players = mutableSetOf(player.uniqueId),
-            owner = player.uniqueId
+            owner = player.uniqueId,
+            alias = alias,
         )
-        channels[alias.lowercase()] = channel
+        channels[name.lowercase()] = channel
+        alias?.let { channels[it.lowercase()] = channel }
         saveChannels()
 
         val data = playerData[player.uniqueId] ?: return Command.SINGLE_SUCCESS
-        data.channels.add(channel.name)
+        data.channels.add(name)
+        alias?.let { data.channels.add(it) }
         setChannel(player, channel)
 
         player.sendMessage(

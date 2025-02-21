@@ -1,8 +1,8 @@
 package me.weiwen.discussion.hooks
 
 import github.scarsz.discordsrv.DiscordSRV
-import github.scarsz.discordsrv.dependencies.kyori.adventure.text.minimessage.MiniMessage
 import me.weiwen.discussion.Discussion.Companion.plugin
+import net.kyori.adventure.text.Component
 import org.bukkit.entity.Player
 import org.bukkit.event.Event
 
@@ -15,10 +15,10 @@ object DiscordSrvHook {
                 null
             }
 
-    fun processChatMessage(player: Player, message: String, channel: String, cancelled: Boolean, event: Event) {
+    fun processChatMessage(player: Player, message: Component, channel: String, cancelled: Boolean, event: Event) {
         discordSrv?.processChatMessage(
             player,
-            MiniMessage.miniMessage().deserialize(message),
+            message as github.scarsz.discordsrv.dependencies.kyori.adventure.text.Component,
             channel,
             cancelled,
             event,
