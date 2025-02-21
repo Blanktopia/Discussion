@@ -37,7 +37,7 @@ object ChatListener : Listener {
 
         val message = split.getOrNull(1)
         if (message != null) {
-            ChatManager.broadcastMessage(player, message, channel)
+            ChatManager.broadcastMessage(player, message, channel, event)
         } else {
             ChatManager.setChannel(player, channel)
         }
@@ -68,6 +68,6 @@ object ChatListener : Listener {
             channels[data.channel.lowercase()]
         } ?: return
 
-        ChatManager.broadcastMessage(player, message, channel)
+        ChatManager.broadcastMessage(player, message, channel, event)
     }
 }

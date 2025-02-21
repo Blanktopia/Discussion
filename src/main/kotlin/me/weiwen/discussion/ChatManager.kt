@@ -25,6 +25,7 @@ import java.util.*
 import io.papermc.paper.command.brigadier.argument.resolvers.selector.PlayerSelectorArgumentResolver
 import io.papermc.paper.plugin.lifecycle.event.types.LifecycleEvents
 import net.kyori.adventure.text.format.NamedTextColor
+import org.bukkit.event.Event
 
 
 object ChatManager {
@@ -44,7 +45,7 @@ object ChatManager {
         plugin.server.onlinePlayers.forEach { savePlayer(it.uniqueId) }
     }
 
-    fun broadcastMessage(player: Player, message: String, channel: Channel) {
+    fun broadcastMessage(player: Player, message: String, channel: Channel, event: Event) {
         val formattedMessage = formatMessage(player, Component.text(message), channel)
         val audience = channel.audience(player.location)
         audience.forEach {
@@ -53,7 +54,7 @@ object ChatManager {
         if (channel.distance != null && audience.all { it == player }) {
             player.sendMessage(miniMessage.deserialize(plugin.config.messages.noOneNearby))
         }
-        DiscordSrvHook.processChatMessage(player, message, channel.name, false)
+        DiscordSrvHook.processChatMessage(player, message, channel.name, false, event)
         plugin.logger.info(LegacyComponentSerializer.legacySection().serialize(formattedMessage))
     }
 
