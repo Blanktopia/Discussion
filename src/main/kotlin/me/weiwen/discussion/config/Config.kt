@@ -31,6 +31,8 @@ data class Config(
     var colors: List<TextColor> = listOf(),
 
     val messages: Messages = Messages(),
+
+    val bubbles: BubbleConfig = BubbleConfig(),
 )
 
 fun parseConfig(plugin: JavaPlugin): Config {
