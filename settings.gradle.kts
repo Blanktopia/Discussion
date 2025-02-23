@@ -6,9 +6,3 @@ pluginManagement {
 }
 
 rootProject.name = "Discussion"
-
-dependencyResolutionManagement {
-    repositories {
-        maven("https://repo.mineinabyss.com/releases")
-    }
-}
