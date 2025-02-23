@@ -51,7 +51,6 @@ object BubblesManager {
             text(component)
             alignment = TextDisplay.TextAlignment.CENTER
         }
-        plugin.logger.info("showing bubble ${component}, ${display}, ${audience.joinToString(", ") {it.name}}")
         for (player in audience) {
             player.showEntity(plugin, display)
         }
