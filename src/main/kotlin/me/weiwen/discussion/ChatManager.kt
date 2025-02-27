@@ -18,7 +18,6 @@ import net.kyori.adventure.text.minimessage.MiniMessage
 import net.kyori.adventure.text.minimessage.tag.Tag
 import net.kyori.adventure.text.minimessage.tag.resolver.Placeholder
 import net.kyori.adventure.text.minimessage.tag.resolver.TagResolver
-import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
 import org.bukkit.Bukkit
 import org.bukkit.entity.Player
 import java.util.*
@@ -61,8 +60,8 @@ object ChatManager {
                 BubblesManager.processChatMessage(player, Component.text(message), channel, audience)
             }
         }
-        DiscordSrvHook.processChatMessage(player, formattedMessage, channel.name, false, event)
-        plugin.logger.info(LegacyComponentSerializer.legacySection().serialize(formattedMessage))
+        DiscordSrvHook.processChatMessage(player, message, channel.name, false, event)
+        plugin.componentLogger.info(formattedMessage)
     }
 
     fun setChannel(player: Player, channel: Channel) {
