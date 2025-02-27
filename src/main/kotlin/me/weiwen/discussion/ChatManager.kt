@@ -201,7 +201,8 @@ object ChatManager {
                     .then(
                         Commands.argument("channel", StringArgumentType.string())
                             .suggests { ctx, builder ->
-                                channels.keys.forEach { builder.suggest(it) }
+                                val player = ctx.source.executor as? Player ?: return@suggests builder.buildFuture()
+                                playerData[player.uniqueId]?.channels?.forEach { builder.suggest(it) }
                                 builder.buildFuture()
                             }
                             .executes(::handleLeaveChannel)
@@ -218,7 +219,8 @@ object ChatManager {
                             .then(
                                 Commands.argument("channel", StringArgumentType.string())
                                     .suggests { ctx, builder ->
-                                        channels.keys.forEach { builder.suggest(it) }
+                                        val player = ctx.source.executor as? Player ?: return@suggests builder.buildFuture()
+                                        playerData[player.uniqueId]?.channels?.forEach { builder.suggest(it) }
                                         builder.buildFuture()
                                     }
                                     .executes(::handleInviteChannel)
@@ -230,7 +232,7 @@ object ChatManager {
                     .then(
                         Commands.argument("channel", StringArgumentType.string())
                             .suggests { ctx, builder ->
-                                channels.values.map { it.name }.toSet().forEach { builder.suggest(it) }
+                                channels.values.filter { it.password == null }.map { it.name }.toSet().forEach { builder.suggest(it) }
                                 builder.buildFuture()
                             }
                             .then(
@@ -245,7 +247,8 @@ object ChatManager {
                     .then(
                         Commands.argument("channel", StringArgumentType.string())
                             .suggests { ctx, builder ->
-                                channels.keys.forEach { builder.suggest(it) }
+                                val player = ctx.source.executor as? Player ?: return@suggests builder.buildFuture()
+                                playerData[player.uniqueId]?.channels?.forEach { builder.suggest(it) }
                                 builder.buildFuture()
                             }
                             .executes(::handleChannelInfo)
@@ -263,7 +266,8 @@ object ChatManager {
             .then(
                 Commands.argument("channel", StringArgumentType.string())
                     .suggests { ctx, builder ->
-                        channels.keys.forEach { builder.suggest(it) }
+                        val player = ctx.source.executor as? Player ?: return@suggests builder.buildFuture()
+                        playerData[player.uniqueId]?.channels?.forEach { builder.suggest(it) }
                         builder.buildFuture()
                     }
                     .executes(::handleSwitchChannel)
